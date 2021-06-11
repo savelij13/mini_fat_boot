@@ -1,0 +1,1216 @@
+
+; LAST UPDATE 11.06.2021 savelij
+
+; загрузчик и запускатель файлов в Hobeta формате с SD карты
+
+		include ../../yad/svn/pentevo/rom/macros.a80
+		include ../../yad/svn/pentevo/rom/sdcomand.a80
+
+;PARSER_PATH	; требует переделки, пока отключен
+
+SD_RSTR		EQU P_DATA
+SD_SEND		EQU P_DATA
+
+; Входные параметры общие:
+; HL-адрес загрузки в память
+; BCDE-32-х битный номер сектора
+; A-количество блоков (блок=512 байт)
+; только для многоблочной записи/чтении
+
+; Ошибки выдаваемые на выходе:
+; A=0-инициализация прошла успешно
+; A=1-карта не найдена или не ответила
+; A=2-карта защищена от записи
+; A=3-попытка записи в сектор 0 карты
+
+ INIT_VAR PEREM
+ SETVAR TDIRCLS,		0x400	;EQU PEREM		; 0x400 буфер кластеров ROOT директории
+ SETVAR BUF_512,		0x200	;EQU TDIRCLS+0x0400	; 0x200 буфер сектора
+ SETVAR CACHE_SEC,		0x200				; 0x200 кеш сектора для разбора Hobeta заголовка
+ SETVAR CAL_FAT,		BYTE	;EQU BUF_512+0x0200	; 1 калибр FAT
+ SETVAR BYTSSEC,		BYTE	;EQU CAL_FAT+1		; 1 количество секторов в кластере
+ SETVAR ROOTCLS,		DWORD	;EQU BYTSSEC+1		; 4 сектор начала ROOT директории
+ SETVAR ROOTSEC,		WORD	;EQU ROOTCLS+4		; 2 размер в секторах ROOT директории
+ SETVAR SEC_FAT,		DWORD	;EQU ROOTSEC+2		; 4 количество секторов одной FAT
+ SETVAR RSVDSEC,		WORD	;EQU SEC_FAT+4		; 2 размер резервной области
+ SETVAR STARTRZ,		DWORD	;EQU RSVDSEC+2		; 4 начало диска/раздела
+ SETVAR FRSTDAT,		DWORD	;EQU STARTRZ+4		; 4 адрес первого сектора данных от BPB
+ SETVAR SEC_DSC,		DWORD	;EQU FRSTDAT+4		; 4 количество секторов на диске/разделе
+ SETVAR CLS_DSC,		DWORD	;EQU SEC_DSC+4		; 4 количество кластеров на диске/разделе
+ SETVAR FATSTR,			DWORD	;EQU CLS_DSC+4		; 4 начало первой FAT таблицы
+ SETVAR FB_EXT,			8 + 3	;EQU FATSTR+4		; B буфер 8.3 для поиска имени
+ SETVAR ADRPATH,		WORD	;EQU FB_EXT+0x0B	; 2 адрес пути к имени файла
+ SETVAR ADR_LD,			WORD	;EQU ADRPATH+2		; 2 адрес загрузки
+ SETVAR HOW_SECTORS,		BYTE				; 1 количество секторов загружено
+ SETVAR SAVE_IY,		WORD
+ SETVAR RREG_L,			WORD
+ SETVAR AFILCLS,		DWORD
+ SETVAR FILESIZE,		DWORD
+
+		ORG ADRLOAD
+		DI
+		LD HL,F_PATH
+		CALL START
+		AND A
+		JR NZ,$
+		PUSH HL
+		LD HL,0
+		LD (SAVE_IY),HL
+		LD IXL,0
+		LD A,1
+		LD HL,CACHE_SEC
+		CALL READ_FILE
+		EXX
+		POP HL
+		LD DE,-4
+		ADD HL,DE
+		LD DE,FILESIZE
+		LDI
+		LDI
+		LDI
+		LDI
+		LD HL,CACHE_SEC + 0x11
+		LD DE,(CACHE_SEC + 9)
+		PUSH DE
+		LD BC,0x200 - 0x11
+		LDIR
+		LD (ADR_LD),DE
+		LD HL,(CACHE_SEC + 0x0B)
+		LD DE,0x11
+		ADD HL,DE
+		DEC H
+		DEC H
+		LD A,H
+		EXX
+		SRL A
+		LD HL,(ADR_LD)
+		CALL READ_FILE
+		PUSH HL
+		LD A,1
+		LD HL,CACHE_SEC
+		CALL READ_FILE
+		LD HL,FILESIZE
+		LD C,(HL)
+		INC HL
+		LD A,(HL)
+		AND 1
+		LD B,A
+		LD DE,CACHE_SEC
+		POP HL
+		LDIR
+
+		LD HL,0x2758
+		EXX
+		LD IY,0x5C3A
+		RET
+
+; -----------------
+; отладочная фигня
+		DUPL 6
+
+ZAVIS		JR $
+; -----------------
+
+; выдача ошибки "нет карточки"
+ZAW003
+		LD A,0xEE
+		RET
+
+; на входе:
+; HL-текстовая строка пути от root
+; DE-адрес куда грузить
+START
+		LD IYL,2
+
+		LD (ADRPATH),HL
+		LD (ADR_LD),DE
+
+; ---------------------------------
+; для Z-контроллера
+		LD A,3
+		OUT (P_CONF),A
+		XOR A
+		OUT (P_DATA),A
+		LD BC,P_DATA
+		LD DE,0x10FF
+.L1		OUT (C),E
+		DEC D
+		JR NZ,.L1
+		LD A,1
+		OUT (P_CONF),A
+		XOR A
+		EX AF,AF'
+;---------------------------------
+
+ZAW001
+		LD HL,CMD00
+		CALL OUTCOM
+		CALL IN_OOUT
+		EX AF,AF'
+		DEC A
+		JR Z,ZAW003
+		EX AF,AF'
+		DEC A
+		JR NZ,ZAW001
+		LD BC,SD_RSTR
+		LD HL,CMD08
+		CALL OUTCOM
+		CALL IN_OOUT
+		IN H,(C)
+		NOP
+		IN H,(C)
+		NOP
+		IN H,(C)
+		NOP
+		IN H,(C)
+		BIT 2,A
+		LD HL,0
+		JR NZ,ZAW006
+		LD H,0x40
+ZAW006		LD A,CMD_55
+		CALL OUT_COM
+		CALL IN_OOUT
+		LD BC,SD_SEND
+		LD A,ACMD_41
+		OUT (C),A
+		LD A,H
+		OUT (C),A
+		XOR A
+		OUT (C),A
+		NOP
+		OUT (C),A
+		NOP
+		OUT (C),A
+		DEC A
+		OUT (C),A
+		CALL IN_OOUT
+		AND A
+		JR NZ,ZAW006
+ZAW004
+		LD A,CMD_59
+		CALL OUT_COM
+		CALL IN_OOUT
+		AND A
+		JR NZ,ZAW004
+ZAW005
+		LD HL,CMD16
+		CALL OUTCOM
+		CALL IN_OOUT
+		AND A
+		JR NZ,ZAW005
+
+; инициализация переменных FAT
+WC_FAT
+		LD DE,0
+		LD B,D
+		LD C,E
+		CALL LOADLST
+		PUSH HL
+		POP IX
+		LD DE,0x01BE
+		ADD HL,DE
+		LD A,(HL)
+		AND A
+		JR NZ,RDFAT05
+		LD DE,4
+		ADD HL,DE
+		LD A,(HL)
+		LD B,0
+		CP 1
+		JR Z,RDFAT06
+		LD B,2
+		CP 0x0B
+		JR Z,RDFAT06
+		CP 0x0C
+		JR Z,RDFAT06
+		LD B,1
+		CP 6
+		JR Z,RDFAT06
+		CP 0x0E
+		JR NZ,RDFAT05
+RDFAT06
+		LD A,B
+		LD (CAL_FAT),A
+		ADD HL,DE
+		CALL LOADZP
+		JR RDFAT00
+
+RDFAT05
+		LD C,(IX+0x0D)
+		XOR A
+		LD E,A
+		LD B,8
+.L1		RR C
+		ADC A,0
+		DJNZ .L1
+		DEC A
+		JR NZ,.L2
+		INC E
+.L2		LD A,(IX+0x0E)
+		OR (IX+0x0F)
+		JR Z,.L3
+		INC E
+.L3		LD A,(IX+0x13)
+		OR (IX+0x14)
+		JR NZ,.L4
+		INC E
+.L4		LD A,(IX+0x20)
+		OR (IX+0x21)
+		OR (IX+0x22)
+		OR (IX+0x23)
+		JR NZ,.L5
+		INC E
+.L5		LD A,(IX+0x15)
+		AND 0xF0
+		CP 0xF0
+		JR NZ,.L6
+		INC E
+.L6		LD A,E
+		CP 4
+		LD A,0xDD
+		RET NZ
+		LD A,0xFF
+		LD (CAL_FAT),A
+		LD DE,0
+		LD B,D
+		LD C,E
+
+RDFAT00
+		LD (STARTRZ),DE
+		LD (STARTRZ+2),BC
+		CALL LOADLST
+		LD HL,0
+		LD DE,(BUF_512+0x16)		
+; BPB_FATSZ16
+		LD A,D
+		OR E
+		JR NZ,RDFAT01
+; если не FAT12/16 (BPB_FATSZ16=0)
+		LD DE,(BUF_512+0x24)
+		LD HL,(BUF_512+0x26)
+; BPB_FATSZ32
+; то берем из смещения +36
+RDFAT01
+		LD (SEC_FAT+2),HL
+		LD (SEC_FAT),DE
+; число секторов на FAT-таблицу
+		LD HL,0
+		LD DE,(BUF_512+0x13)
+; BPB_TOTSEC16
+		LD A,D
+		OR E
+		JR NZ,RDFAT02
+; если не FAT12/16 (BPB_TOTSEC16=0)
+		LD DE,(BUF_512+0x20)
+		LD HL,(BUF_512+0x22)
+; BPB_TOTSEC32
+; то берем из смещения +32
+RDFAT02
+		LD (SEC_DSC+2),HL
+		LD (SEC_DSC),DE
+; количество секторов на диске/разделе
+
+; вычисляем ROOTDIRSECTORS
+		LD BC,(BUF_512+0x0B)
+; BPB_BYTSPERSEC
+		LD DE,(BUF_512+0x11)
+; BPB_ROOTENTCNT
+		LD HL,0
+		LD A,D
+		OR E
+		JR Z,RDFAT03
+		LD B,H
+		LD C,L
+		LD A,0x10
+		CALL BCDE_A
+		EX DE,HL
+
+; это реализована формула
+; ROOTDIRSECTORS = ((BPB_ROOTENTCNT*32) + (BPB_BYTSPERSEC-1)) / BPB_BYTSPERSEC
+; в HL ROOTDIRSECTORS
+; если FAT32, то HL=0 всегда
+
+RDFAT03
+		PUSH HL				; ROOTDIRSECTORS
+		LD (ROOTSEC),HL
+		LD A,(BUF_512+0x10)
+		LD DE,(SEC_FAT)
+		LD HL,(SEC_FAT+2)
+		DEC A
+.L1		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		DEC A
+		JR NZ,.L1
+		POP BC
+; полный размер FAT-области в секторах
+		CALL HLDEPBC
+; прибавили ROOTDIRSECTORS
+		LD BC,(BUF_512+0x0E)
+; BPB_RSVDSECCNT
+		LD (RSVDSEC),BC
+		CALL HLDEPBC
+; прибавили BPB_RESVDSECCNT
+		LD (FRSTDAT),DE
+		LD (FRSTDAT+2),HL
+; положили номер первого сектора данных
+		LD B,H
+		LD C,L
+		LD HL,SEC_DSC
+; BCDE + 32-ое число по адресу HL
+		CALL BCDEHLM
+; вычли из полного к-ва секторов раздела
+		LD A,(BUF_512+0x0D)
+		LD (BYTSSEC),A
+		CALL BCDE_A
+; разделили на количество секторов в кластере
+		LD (CLS_DSC),DE
+		LD (CLS_DSC+2),BC
+; положили кол-во кластеров на разделе
+
+		LD A,(CAL_FAT)
+		CP 0xFF
+		JR NZ,RDFAT04
+		LD HL,(CLS_DSC)
+		LD DE,(CLS_DSC+2)
+		PUSH HL
+		PUSH DE
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		LD B,H
+		LD C,L
+		CALL RASCHET
+		LD A,1
+		POP DE
+		POP HL
+		JR Z,RDFAT04
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		LD B,H
+		LD C,L
+		CALL RASCHET
+		LD A,2
+		JR Z,RDFAT04
+		XOR A
+
+; для FAT12/16 вычисляем адрес первого
+; сектора директории
+; для FAT32 берем по смещению +44
+; на выходе BCDE-сектор ROOTDIR
+RDFAT04
+		PUSH AF
+		LD DE,(RSVDSEC)
+		LD BC,0
+		LD HL,STARTRZ
+		CALL BCDEHLP
+		LD (FATSTR),DE
+		LD (FATSTR+2),BC
+		POP AF
+		LD (CAL_FAT),A
+		AND A
+		LD DE,0
+		LD B,D
+		LD C,E
+		JR Z,FSRROO2			;FAT12-NONE
+		DEC A
+		JR Z,FSRROO2			;FAT16
+		LD DE,(BUF_512+0x2C)
+		LD BC,(BUF_512+0x2E)		;FAT32
+FSRROO2
+		LD (ROOTCLS),DE
+		LD (ROOTCLS+2),BC
+; сектор root директории
+
+		LD HL,(ADRPATH)
+FINDFL1
+	IFDEF PARSER_PATH
+		PUSH BC
+		PUSH DE
+		CALL FNDBUF
+		POP DE
+		POP BC
+	ENDIF
+		PUSH HL
+		LD HL,TDIRCLS
+		LD A,D
+		OR E
+		OR B
+		OR C
+		CALL SAVEZP
+		JR Z,LASTCLS
+NEXTCLS
+		PUSH HL
+		CALL RDFATZP
+		CALL LST_CLS
+		POP HL
+		JR C,LASTCLS
+		CALL SAVEZP
+		JR NEXTCLS
+
+LASTCLS
+		LD BC,0xFFFF
+		CALL SAVEZP
+FINDFL		INC BC
+		CALL RDDIRSC
+		LD A,C
+		AND 0x0F
+		LD E,A
+		LD D,0
+		EX DE,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,DE
+		LD A,(HL)
+		AND A
+		LD A,0xAA
+		INC SP
+		INC SP
+		RET Z
+		DEC SP
+		DEC SP
+		PUSH HL
+		PUSH BC
+		CALL COMPARE
+		POP BC
+		POP DE
+		LD IXH,D
+		LD IXL,E
+		JR NZ,FINDFL
+		CALL RD_CLAS
+		EX (SP),HL
+;		LD A,(HL)
+;		INC SP
+;		INC SP
+;		AND A
+;		JR NZ,FINDFL1
+;		DEC SP
+;		DEC SP
+		POP HL
+		LD A,(IX+0x0B)
+		AND 0x10
+		LD A,0xAA
+		RET NZ
+		PUSH BC
+		PUSH DE
+		CALL LOADZP
+		LD A,E
+		AND A
+		JR Z,.L1
+		INC D
+		JR NZ,.L1
+		INC BC
+.L1		BIT 0,D
+		JR Z,.L2
+		INC D
+		JR NZ,.L2
+		INC BC
+.L2		CALL BCDE200
+		PUSH DE
+		EXX
+		POP HL
+		LD A,(BYTSSEC)
+		LD IXH,A
+		EXX
+		POP DE
+		POP BC
+		XOR A
+		RET			; на выходе BCDE - номер стартового кластера файла
+
+;		LD HL,(ADR_LD)
+
+; IXH - размер кластера в  секторах
+; IXL - смещение в секторах в кластере
+; BCDE - номер кластера
+; LY - стартовая страница загрузки
+;		EXX
+;		LD A,L
+;		LD DE,0x41
+;		SBC HL,DE
+;		JR C,.L3
+;		LD A,0x40
+;.L3		EXX
+;		JR LDMINI
+
+; файл кончился
+;LDEFILE
+;		XOR A
+;		RET
+
+;LDMINI
+;		EXX
+;		LD L,A
+;		LD A,IXH
+;		LD H,A
+;		CP L
+;		JR C,.L1
+;		LD A,L
+;.L1		EXX
+
+; BCDE - номер кластера
+; HL - адрес загрузки
+; A - количество секторов для загрузки
+; переменные:
+; IYL - количество загружаемых секторов
+; IXH - размер кластера в секторах
+; IXL - смещение в секторах в кластере
+LOAD_SECTOR	PUSH BC
+		PUSH DE
+		PUSH HL
+		PUSH AF
+		LD IYL,A		; количество секторов для чтения
+		CALL REALSEC
+		LD A,IXL
+		LD L,A
+		LD H,0
+		ADD HL,DE
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		LD B,H
+		LD C,L			; BCDE = номер сектора + смещение в кластере
+		POP AF
+		POP HL
+		CALL RDMULTI
+		
+		POP DE
+		POP BC
+;		LD A,H
+;		AND A
+;		RET Z
+		PUSH HL
+		CALL RDFATZP
+		CALL LST_CLS
+		POP HL
+;		JR C,LDEFILE
+;		EXX
+;		LD A,L
+;		SUB H
+;		EXX
+;		JR NC,LDMINI
+;		XOR A
+		RET
+
+; A - колич5ество секторов загрузки
+; BCDE - номер кластера для чтения
+; HL - адрес загрузки
+; IXL - L - количество секторов для загрузки
+; IXH - H - размер кластера
+; IYL - E -
+; IYH - D - смещение в кластере
+READ_FILE
+;		EX AF,AF'
+;		LD A,IYL
+;		DEC A
+;		JR Z,LD_FILE00
+;		LD IYL,INT4EXT
+;		LD HL,LD_FILE6
+;		PUSH HL
+;		LD HL,(RREG_L)			;АДРЕС ЗАГРУЗКИ
+		LD (AFILCLS),DE
+		LD (AFILCLS+2),BC
+		LD (RREG_L),HL
+		EXX
+		LD L,A				;КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
+		LD DE,(SAVE_IY)			;СМЕЩЕНИЕ В КЛАСТЕРЕ
+		LD A,(BYTSSEC)
+		LD H,A				;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
+;		LD A,(RREG_A)
+		EXX
+;		JR LD_FILE0
+
+;LD_FILE00	EXX
+;		LD DE,(SAVE_IY)			;СМЕЩЕНИЕ В КЛАСТЕРЕ
+;		LD HL,LD_FILE8
+;		PUSH HL
+;		LD A,(BYTSSEC)			;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
+;		LD H,A				;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
+;		EX AF,AF'
+;		LD L,A				;КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
+;		EXX
+;IXL-L-КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
+;IXH-H-РАЗМЕР КЛАСТЕРА
+;IYL-E-
+;IYH-D-СМЕЩЕНИЕ В КЛАСТЕРЕ
+LD_FILE0	PUSH HL
+		LD HL,UPDATE_OFFSET_CLS
+		EX (SP),HL
+		LD DE,(AFILCLS)
+		LD BC,(AFILCLS+2)		;ТЕКУЩИЙ НОМЕР КЛАСТЕРА
+		PUSH BC
+		PUSH DE
+		PUSH HL
+		CALL REALSEC			;ПЕРЕВЕЛИ НОМЕР КЛАСТЕРА В НОМЕР СЕКТОРА
+		EXX
+		LD A,D			;IYH
+		EXX
+		LD L,A
+		LD H,0
+		ADD HL,DE
+		EX DE,HL
+		JR NC,LD_FILE1
+		INC BC				;BCDE=НОМЕР СЕКТОРА ОТКУДА ГРУЗИТЬ
+LD_FILE1	EXX
+		LD A,L			;IXL
+		CP H			;IXH
+		JP C,LD_FILE2
+		LD A,H			;IXH
+LD_FILE2	ADD A,D			;IYH
+		CP H			;IXH
+		LD A,L			;IXL
+		JP C,LD_FILE5
+		LD A,H			;IXH
+		SUB D			;IYH
+LD_FILE5	LD E,A			;IYL,A	;СКОЛЬКО СЕКТОРОВ СЕЙЧАС ГРУЗИМ
+		EXX
+		POP HL				;ВОССТАНОВИЛИ АДРЕС ЗАГРУЗКИ
+;		LD IYL,INT4EXT
+;		CALL TO_DRV
+;		DB _DEV_READ
+		CALL RDMULTI
+;		LD A,IYL
+;		DEC A
+;		JR Z,LD_FILE7
+		LD (RREG_L),HL
+LD_FILE7	POP DE
+		POP BC				;ВОССТАНОВИЛИ НОМЕР КЛАСТЕРА
+		EXX
+		LD A,D			;IYH
+		ADD A,E			;IYL
+		CP H			;IXH
+		JP C,LD_FILE3
+		SUB H			;IXH
+LD_FILE3	LD D,A			;IYH,A
+		EXX
+		JP C,LD_FILE4
+		PUSH HL				;СОХРАНИЛИ АДРЕС ЗАГРУЗКИ
+;		PUSH IY
+;		LD IYL,INTERNAL
+		CALL RDFATZP			;ПРОЧИТАЛИ НОМЕР СЛЕДУЮЩЕГО КЛАСТЕРА
+;		POP IY
+		LD (AFILCLS),DE
+		LD (AFILCLS+2),BC
+		CALL LST_CLS			;ПРОВЕРИЛИ, А МОЖЕТ ЭТО ПОСЛЕДНИЙ КЛАСТЕР?
+		POP HL				;ВОССТАНОВИЛИ АДРЕС ЗАГРУЗКИ
+		RET C				;ЕСЛИ ПОСЛЕДНИЙ, ВЫХОДИМ
+LD_FILE4	EXX
+		LD A,L			;IXL
+		SUB E			;IYL
+		EXX
+		RET Z
+		EXX
+		LD L,A			;IXL,A
+		EXX
+		JP NZ,LD_FILE0
+		RET
+
+UPDATE_OFFSET_CLS
+		EXX
+		LD (SAVE_IY),DE
+		EXX
+		RET
+
+SAVEZP
+		LD (HL),E
+		INC HL
+		LD (HL),D
+		INC HL
+		LD (HL),C
+		INC HL
+		LD (HL),B
+		INC HL
+		RET
+
+LOADZP
+		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		INC HL
+		LD C,(HL)
+		INC HL
+		LD B,(HL)
+		INC HL
+		RET
+
+; чтение сектора dir по номеру BC
+RDDIRSC
+		PUSH BC
+		LD D,B
+		LD E,C
+		LD BC,0
+		LD A,0x10
+		CALL BCDE_A
+		LD A,E
+		PUSH AF
+		LD A,(BYTSSEC)
+		PUSH AF
+		CALL BCDE_A
+		LD HL,TDIRCLS
+		EX DE,HL
+		ADD HL,HL
+		ADD HL,HL
+		ADD HL,DE
+		CALL LOADZP
+		CALL REALSEC
+		POP AF
+		DEC A
+		LD L,A
+		POP AF
+		AND L
+		LD L,A
+		LD H,0
+		ADD HL,DE
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		LD B,H
+		LD C,L
+		CALL LOADLST
+		POP BC
+		RET
+
+LST_CLS		LD A,(CAL_FAT)
+		AND A
+		JR NZ,LST_CL1
+		LD HL,0x0FF7
+		SBC HL,DE
+		RET
+
+LST_CL1		DEC A
+		JR NZ,LST_CL2
+LST_CL3		LD HL,0xFFF7
+		SBC HL,DE
+		RET
+
+LST_CL2		LD HL,0x0FFF
+		SBC HL,BC
+		RET NZ
+		JR LST_CL3
+
+RDFATZP		LD A,(CAL_FAT)
+		AND A
+		JR Z,RDFATS0
+		DEC A
+		JR Z,RDFATS1
+		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		LD HL,0
+		ADC HL,BC
+		ADD HL,BC
+		LD A,E
+		LD E,D
+		LD D,L
+		LD C,H
+		LD B,0
+		CALL RDFATS2
+		INC HL
+		LD C,(HL)
+		INC HL
+		LD B,(HL)
+		RET
+
+RDFATS1		LD BC,0
+		LD A,E
+		LD E,D
+		LD D,C
+RDFATS2		PUSH AF
+		PUSH BC
+		LD HL,FATSTR
+		CALL BCDEHLP
+		CALL LOADLST
+		POP BC
+		POP AF
+		LD E,A
+		LD D,0
+		ADD HL,DE
+		ADD HL,DE
+		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		RET
+
+RDFATS0		LD H,D
+		LD L,E
+		ADD HL,HL
+		ADD HL,DE
+		SRL H
+		RR L
+		LD A,E
+		LD E,H
+		LD D,0
+		LD B,D
+		LD C,D
+		SRL E
+		PUSH AF
+		PUSH HL
+		LD HL,FATSTR
+		CALL BCDEHLP
+		CALL LOADLST
+		POP BC
+		LD A,B
+		AND 1
+		LD B,A
+		ADD HL,BC
+		LD B,(HL)
+		INC HL
+		LD A,H
+		CP HIGH (BUF_512)+2
+		JR NZ,RDFATS4
+		PUSH BC
+		LD BC,0
+		INC DE
+		CALL LOADLST
+		POP BC
+RDFATS4		POP AF
+		LD D,(HL)
+		LD E,B
+		LD BC,0
+		RRA
+		JR NC,RDFATS3
+		SRL D
+		RR E
+		SRL D
+		RR E
+		SRL D
+		RR E
+		SRL D
+		RR E
+RDFATS3		LD A,D
+		AND 0x0F
+		LD D,A
+		RET
+
+; вычисление реального сектора
+; на входе: BCDE = номер кластера
+; на выходе: BCDE = номер сектора
+REALSEC
+		LD A,B
+		OR C
+		OR D
+		OR E
+		JR NZ,REALSE1
+		LD HL,SEC_FAT
+		LD DE,(FATSTR)
+		LD BC,(FATSTR+2)
+		PUSH HL
+		CALL BCDEHLP
+		POP HL
+		JP BCDEHLP
+
+REALSE1
+		LD HL,0xFFFE
+		EX DE,HL
+		ADD HL,DE
+		EX DE,HL
+		INC HL
+		ADC HL,BC
+; номер кластера-2
+		LD A,(BYTSSEC)
+		JR REALSE2
+
+REALSE3
+		SLA E
+		RL D
+		RL L
+		RL H
+REALSE2		RRCA
+		JR NC,REALSE3
+; умножили на размер кластера
+		LD B,H
+		LD C,L
+		LD HL,STARTRZ
+		CALL BCDEHLP
+; прибавили смещение от начала диска
+		LD HL,FRSTDAT
+		JP BCDEHLP
+; прибавили смещение от начала раздела
+
+BCDE200
+		LD E,D
+		LD D,C
+		LD C,B
+		LD B,0
+		LD A,2
+		JR BCDE_A
+
+; BCDE >> A = BCDE
+BCDE_A1
+		SRL B
+		RR C
+		RR D
+		RR E
+BCDE_A		RRCA
+		JR NC,BCDE_A1
+		RET
+
+; (ADR) - BCDE = BCDE
+BCDEHLM
+		LD A,(HL)
+		INC HL
+		SUB E
+		LD E,A
+		LD A,(HL)
+		INC HL
+		SBC A,D
+		LD D,A
+		LD A,(HL)
+		INC HL
+		SBC A,C
+		LD C,A
+		LD A,(HL)
+		SBC A,B
+		LD B,A
+		RET
+
+; (ADR) + BCDE = BCDE
+BCDEHLP
+		LD A,(HL)
+		INC HL
+		ADD A,E
+		LD E,A
+		LD A,(HL)
+		INC HL
+		ADC A,D
+		LD D,A
+		LD A,(HL)
+		INC HL
+		ADC A,C
+		LD C,A
+		LD A,(HL)
+		ADC A,B
+		LD B,A
+		RET
+
+; HLDE + BC = HLDE
+HLDEPBC
+		EX DE,HL
+		ADD HL,BC
+		EX DE,HL
+		LD BC,0
+		ADC HL,BC
+		RET
+
+; определятор разрядности FAT
+RASCHET
+		CALL BCDE200
+		LD HL,SEC_FAT
+		CALL BCDEHLM
+		LD A,E
+		AND 0xF0
+		OR D
+		OR C
+		OR B
+		RET
+
+; грузилка одного сектора
+LOADLST
+		LD HL,BUF_512
+		LD A,1
+		PUSH HL
+		CALL RDMULTI
+		POP HL
+		RET
+
+OUTCOM
+		PUSH BC
+		LD BC,0x0600+SD_SEND
+		OTIR
+		POP BC
+		RET
+
+OUT_COM		PUSH BC
+		LD BC,SD_SEND
+		OUT (C),A
+		XOR A
+		OUT (C),A
+		NOP
+		OUT (C),A
+		NOP
+		OUT (C),A
+		NOP
+		OUT (C),A
+		DEC A
+		OUT (C),A
+		POP BC
+		RET
+
+SECM200
+		PUSH HL
+		PUSH BC
+		LD A,CMD_58
+		CALL OUT_COM
+		CALL IN_OOUT
+		LD BC,SD_RSTR
+		IN H,(C)
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		BIT 6,H
+		POP HL
+		JR NZ,SECN200
+		EX DE,HL
+		ADD HL,HL
+		EX DE,HL
+		ADC HL,HL
+		LD H,L
+		LD L,D
+		LD D,E
+		LD E,0
+SECN200
+		LD A,CMD_18
+		LD C,SD_SEND
+		OUT (C),A
+		NOP
+		OUT (C),H
+		NOP
+		OUT (C),L
+		NOP
+		OUT (C),D
+		NOP
+		OUT (C),E
+		LD A,0xFF
+		OUT (C),A
+		POP HL
+		RET
+
+IN_OOUT
+		PUSH DE
+		LD DE,0x20FF
+IN_WAIT		IN A,(SD_RSTR)
+		CP E
+		JR NZ,IN_EXIT
+IN_NEXT
+		DEC D
+		JR NZ,IN_WAIT
+IN_EXIT		POP DE
+		RET
+
+CMD00		DB 0x40,0x00,0x00,0x00,0x00,0x95	; GO_IDLE_STATE
+CMD08		DB 0x48,0x00,0x00,0x01,0xAA,0x87	; SEND_IF_COND
+CMD16		DB 0x50,0x00,0x00,0x02,0x00,0xFF	; SET_BLOCKEN
+
+RDMULTI
+		PUSH BC
+		PUSH DE
+		EX AF,AF'
+		CALL SECM200
+		EX AF,AF'
+		LD BC,SD_RSTR
+RDMULT1		EX AF,AF'
+.L1		CALL IN_OOUT
+		CP 0xFE
+		JR NZ,.L1
+		INIR
+		NOP
+		INIR
+		NOP
+		IN A,(C)
+		NOP
+		IN A,(C)
+		EX AF,AF'
+		DEC A
+		JR NZ,RDMULT1
+		LD A,CMD_12
+		CALL OUT_COM
+.L2		CALL IN_OOUT
+		INC A
+		JR NZ,.L2
+		POP DE
+		POP BC
+		RET
+
+; выборка номера кластера из файлового описателя
+RD_CLAS		EX DE,HL
+		LD DE,0x14
+		ADD HL,DE
+		LD C,(HL)
+		INC HL
+		LD B,(HL)
+		LD E,5
+		ADD HL,DE
+		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		INC HL
+		RET
+
+COMPARE
+	IFDEF PARSER_PATH
+		LD DE,FB_EXT
+	ELSE
+		LD DE,F_PATH
+	ENDIF
+		LD B,8 + 3
+.L1		LD A,(DE)
+		CP (HL)
+		RET NZ
+		INC HL
+		INC DE
+		DJNZ .L1
+		RET
+
+	IFDEF PARSER_PATH
+; распаковщик пути к файлу
+FNDBUF		LD BC,0x0802
+		LD DE,FB_EXT
+.L2
+		LD A,(HL)
+		INC HL
+		CP '.'
+		JR Z,.L4
+		CP '\\'
+		JR Z,.L3
+		LD (DE),A
+		INC DE
+		DJNZ .L2
+		LD A,(HL)
+		AND A
+		RET Z
+		INC HL
+		JR .L5
+
+.L3
+		LD A,C
+		AND A
+		RET Z
+.L4
+		LD A,B
+		AND A
+		JR Z,.L5
+		LD A,' '
+.L1		LD (DE),A
+		INC DE
+		DJNZ .L1
+.L5		LD B,3
+		DEC C
+		DEC HL
+		LD A,(HL)
+		CP '\\'
+		JR Z,.L2
+		INC HL
+		JR .L2
+	ENDIF
+
+; путь до файла от ROOT
+F_PATH
+;		DB "!README!.TXT",0
+;		DB "PROBA05.SSS",0
+;		DB "SYSTEMZX\\NEOGS\\NEOGS.ROM"
+;		    0123456789A
+		DB "FA024   $C "
+		DB 0
+
+PEREM		EQU (HIGH ($) + 1) * 0x100

@@ -1,0 +1,29 @@
+
+; LAST UPDATE: 11.06.2021 savelij
+
+		include ../../yad/svn/pentevo/rom/macros.a80
+		include ../../yad/svn/pentevo/rom/global_vars.a80
+		include ../../yad/svn/pentevo/rom/basic_tokens.a80
+
+ADR_LOADING	EQU ADRLOAD			;  ¤à¥á § £àã§ª¨ ¨ ª®¬¯¨«ïæ¨¨
+
+		ORG ADR_LOADING-0X117		; (END_HEADER-START_SCL)
+; ‡€ƒŽ‹Ž‚ŽŠ SCL ”€‰‹€
+START_SCL	DB "SINCLAIR",1,"mbootsd B"
+		DW BASIC_FULL,BASIC_FULL
+FULL_SIZE	DB SIZE_SECTORS+1
+
+		include ../../yad/svn/pentevo/rom/basic4monoloader.a80
+
+;END_HEADER
+	
+		ORG ADR_LOADING
+		binclude rom/miniboot.rom
+END_COD
+
+		DUPL LOW (-$),0
+		IF (END_COD-ADR_LOADING)&0XFF
+SIZE_SECTORS	EQU ((END_COD-ADR_LOADING)>>8)+1
+		ELSE
+SIZE_SECTORS	EQU ((END_COD-ADR_LOADING)>>8)
+		ENDIF
