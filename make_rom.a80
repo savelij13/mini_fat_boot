@@ -1,0 +1,24 @@
+
+; LAST UPDATE: 12.06.2021 savelij
+
+		include ../../yad/svn/pentevo/rom/macros.a80
+
+		ORG 0
+		DI
+		LD HL,BOOT
+		LD DE,ADRLOAD
+		LD BC,EBOOT - BOOT
+		LDIR
+		LD HL,BASIC_VARS
+		LD DE,0x5C00
+		LD BC,EBASIC_VARS - BASIC_VARS
+		LDIR
+		JP ADRLOAD
+
+BASIC_VARS	binclude bin/bas_var.bin
+EBASIC_VARS
+
+BOOT		binclude rom/miniboot.rom
+EBOOT
+
+		DUPL 0x4000 - $,0xFF

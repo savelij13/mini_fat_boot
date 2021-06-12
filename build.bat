@@ -14,4 +14,7 @@ rem copy /Y /B rom\miniboot.rom D:\yad\unrealspeccy\miniboot.rom
 ..\..\yad\svn\pentevo\tools\csum32\csum32 rom\make_scl.rom
 copy /B /Y rom\make_scl.rom+csum32.bin bin\minibootsd.scl
 
+..\..\yad\svn\pentevo\tools\asw\bin\asw -U -L -x -olist lst\make_rom.lst -D ADRLOAD=0x4000 make_rom.a80
+..\..\yad\svn\pentevo\tools\asw\bin\p2bin make_rom.p bin\miniboot.rom -r $-$ -k
+
 del *.bin

@@ -38,17 +38,18 @@ SD_SEND		EQU P_DATA
  SETVAR SEC_DSC,		DWORD	;EQU FRSTDAT+4		; 4 количество секторов на диске/разделе
  SETVAR CLS_DSC,		DWORD	;EQU SEC_DSC+4		; 4 количество кластеров на диске/разделе
  SETVAR FATSTR,			DWORD	;EQU CLS_DSC+4		; 4 начало первой FAT таблицы
- SETVAR FB_EXT,			8 + 3	;EQU FATSTR+4		; B буфер 8.3 для поиска имени
  SETVAR ADRPATH,		WORD	;EQU FB_EXT+0x0B	; 2 адрес пути к имени файла
  SETVAR ADR_LD,			WORD	;EQU ADRPATH+2		; 2 адрес загрузки
-; SETVAR HOW_SECTORS,		BYTE				; 1 количество секторов загружено
  SETVAR SAVE_IY,		WORD
-; SETVAR RREG_L,			WORD
  SETVAR AFILCLS,		DWORD
  SETVAR FILESIZE,		DWORD
 
 		ORG ADRLOAD
 		DI
+		LD SP,0x5FFF
+		LD BC,0x7FFD
+		LD A,0x10
+		OUT (C),A
 		LD HL,F_PATH
 		CALL START
 		AND A
@@ -1048,10 +1049,10 @@ COMPARE
 		DJNZ .L1
 		RET
 
-; путь до файла от ROOT
+; имя файла (8 + 3 + 1)
 F_PATH
-;		    0123456789A
-		DB "FA025   $C "
+		DB "FA025   "
+		DB "$C "
 		DB 0
 
 PEREM		EQU (HIGH ($) + 1) * 0x100
