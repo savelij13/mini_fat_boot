@@ -1,4 +1,3 @@
-
-*.rom
-lst/make_scl.lst
+rom/*.rom
+lst/*.lst
 *.lst
