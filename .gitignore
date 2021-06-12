@@ -1,2 +1,4 @@
 
 *.rom
+lst/make_scl.lst
+*.lst

@@ -41,9 +41,9 @@ SD_SEND		EQU P_DATA
  SETVAR FB_EXT,			8 + 3	;EQU FATSTR+4		; B буфер 8.3 для поиска имени
  SETVAR ADRPATH,		WORD	;EQU FB_EXT+0x0B	; 2 адрес пути к имени файла
  SETVAR ADR_LD,			WORD	;EQU ADRPATH+2		; 2 адрес загрузки
- SETVAR HOW_SECTORS,		BYTE				; 1 количество секторов загружено
+; SETVAR HOW_SECTORS,		BYTE				; 1 количество секторов загружено
  SETVAR SAVE_IY,		WORD
- SETVAR RREG_L,			WORD
+; SETVAR RREG_L,			WORD
  SETVAR AFILCLS,		DWORD
  SETVAR FILESIZE,		DWORD
 
@@ -74,7 +74,8 @@ SD_SEND		EQU P_DATA
 		PUSH DE
 		LD BC,0x200 - 0x11
 		LDIR
-		LD (ADR_LD),DE
+;		LD (ADR_LD),DE
+		PUSH DE
 		LD HL,(CACHE_SEC + 0x0B)
 		LD DE,0x11
 		ADD HL,DE
@@ -83,7 +84,8 @@ SD_SEND		EQU P_DATA
 		LD A,H
 		EXX
 		SRL A
-		LD HL,(ADR_LD)
+;		LD HL,(ADR_LD)
+		POP HL
 		CALL READ_FILE
 		PUSH HL
 		LD A,1
@@ -106,9 +108,9 @@ SD_SEND		EQU P_DATA
 
 ; -----------------
 ; отладочная фигня
-		DUPL 6
+;		DUPL 6
 
-ZAVIS		JR $
+;ZAVIS		JR $
 ; -----------------
 
 ; выдача ошибки "нет карточки"
@@ -488,13 +490,6 @@ FINDFL		INC BC
 		JR NZ,FINDFL
 		CALL RD_CLAS
 		EX (SP),HL
-;		LD A,(HL)
-;		INC SP
-;		INC SP
-;		AND A
-;		JR NZ,FINDFL1
-;		DEC SP
-;		DEC SP
 		POP HL
 		LD A,(IX+0x0B)
 		AND 0x10
@@ -526,81 +521,7 @@ FINDFL		INC BC
 		XOR A
 		RET			; на выходе BCDE - номер стартового кластера файла
 
-;		LD HL,(ADR_LD)
-
-; IXH - размер кластера в  секторах
-; IXL - смещение в секторах в кластере
-; BCDE - номер кластера
-; LY - стартовая страница загрузки
-;		EXX
-;		LD A,L
-;		LD DE,0x41
-;		SBC HL,DE
-;		JR C,.L3
-;		LD A,0x40
-;.L3		EXX
-;		JR LDMINI
-
-; файл кончился
-;LDEFILE
-;		XOR A
-;		RET
-
-;LDMINI
-;		EXX
-;		LD L,A
-;		LD A,IXH
-;		LD H,A
-;		CP L
-;		JR C,.L1
-;		LD A,L
-;.L1		EXX
-
-; BCDE - номер кластера
-; HL - адрес загрузки
-; A - количество секторов для загрузки
-; переменные:
-; IYL - количество загружаемых секторов
-; IXH - размер кластера в секторах
-; IXL - смещение в секторах в кластере
-LOAD_SECTOR	PUSH BC
-		PUSH DE
-		PUSH HL
-		PUSH AF
-		LD IYL,A		; количество секторов для чтения
-		CALL REALSEC
-		LD A,IXL
-		LD L,A
-		LD H,0
-		ADD HL,DE
-		EX DE,HL
-		LD HL,0
-		ADC HL,BC
-		LD B,H
-		LD C,L			; BCDE = номер сектора + смещение в кластере
-		POP AF
-		POP HL
-		CALL RDMULTI
-		
-		POP DE
-		POP BC
-;		LD A,H
-;		AND A
-;		RET Z
-		PUSH HL
-		CALL RDFATZP
-		CALL LST_CLS
-		POP HL
-;		JR C,LDEFILE
-;		EXX
-;		LD A,L
-;		SUB H
-;		EXX
-;		JR NC,LDMINI
-;		XOR A
-		RET
-
-; A - колич5ество секторов загрузки
+; A - количество секторов загрузки
 ; BCDE - номер кластера для чтения
 ; HL - адрес загрузки
 ; IXL - L - количество секторов для загрузки
@@ -608,35 +529,14 @@ LOAD_SECTOR	PUSH BC
 ; IYL - E -
 ; IYH - D - смещение в кластере
 READ_FILE
-;		EX AF,AF'
-;		LD A,IYL
-;		DEC A
-;		JR Z,LD_FILE00
-;		LD IYL,INT4EXT
-;		LD HL,LD_FILE6
-;		PUSH HL
-;		LD HL,(RREG_L)			;АДРЕС ЗАГРУЗКИ
 		LD (AFILCLS),DE
 		LD (AFILCLS+2),BC
-		LD (RREG_L),HL
 		EXX
 		LD L,A				;КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
 		LD DE,(SAVE_IY)			;СМЕЩЕНИЕ В КЛАСТЕРЕ
 		LD A,(BYTSSEC)
 		LD H,A				;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
-;		LD A,(RREG_A)
 		EXX
-;		JR LD_FILE0
-
-;LD_FILE00	EXX
-;		LD DE,(SAVE_IY)			;СМЕЩЕНИЕ В КЛАСТЕРЕ
-;		LD HL,LD_FILE8
-;		PUSH HL
-;		LD A,(BYTSSEC)			;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
-;		LD H,A				;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
-;		EX AF,AF'
-;		LD L,A				;КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
-;		EXX
 ;IXL-L-КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
 ;IXH-H-РАЗМЕР КЛАСТЕРА
 ;IYL-E-
@@ -673,14 +573,7 @@ LD_FILE2	ADD A,D			;IYH
 LD_FILE5	LD E,A			;IYL,A	;СКОЛЬКО СЕКТОРОВ СЕЙЧАС ГРУЗИМ
 		EXX
 		POP HL				;ВОССТАНОВИЛИ АДРЕС ЗАГРУЗКИ
-;		LD IYL,INT4EXT
-;		CALL TO_DRV
-;		DB _DEV_READ
 		CALL RDMULTI
-;		LD A,IYL
-;		DEC A
-;		JR Z,LD_FILE7
-		LD (RREG_L),HL
 LD_FILE7	POP DE
 		POP BC				;ВОССТАНОВИЛИ НОМЕР КЛАСТЕРА
 		EXX
@@ -693,10 +586,7 @@ LD_FILE3	LD D,A			;IYH,A
 		EXX
 		JP C,LD_FILE4
 		PUSH HL				;СОХРАНИЛИ АДРЕС ЗАГРУЗКИ
-;		PUSH IY
-;		LD IYL,INTERNAL
 		CALL RDFATZP			;ПРОЧИТАЛИ НОМЕР СЛЕДУЮЩЕГО КЛАСТЕРА
-;		POP IY
 		LD (AFILCLS),DE
 		LD (AFILCLS+2),BC
 		CALL LST_CLS			;ПРОВЕРИЛИ, А МОЖЕТ ЭТО ПОСЛЕДНИЙ КЛАСТЕР?
@@ -1148,11 +1038,7 @@ RD_CLAS		EX DE,HL
 		RET
 
 COMPARE
-	IFDEF PARSER_PATH
-		LD DE,FB_EXT
-	ELSE
 		LD DE,F_PATH
-	ENDIF
 		LD B,8 + 3
 .L1		LD A,(DE)
 		CP (HL)
@@ -1162,55 +1048,10 @@ COMPARE
 		DJNZ .L1
 		RET
 
-	IFDEF PARSER_PATH
-; распаковщик пути к файлу
-FNDBUF		LD BC,0x0802
-		LD DE,FB_EXT
-.L2
-		LD A,(HL)
-		INC HL
-		CP '.'
-		JR Z,.L4
-		CP '\\'
-		JR Z,.L3
-		LD (DE),A
-		INC DE
-		DJNZ .L2
-		LD A,(HL)
-		AND A
-		RET Z
-		INC HL
-		JR .L5
-
-.L3
-		LD A,C
-		AND A
-		RET Z
-.L4
-		LD A,B
-		AND A
-		JR Z,.L5
-		LD A,' '
-.L1		LD (DE),A
-		INC DE
-		DJNZ .L1
-.L5		LD B,3
-		DEC C
-		DEC HL
-		LD A,(HL)
-		CP '\\'
-		JR Z,.L2
-		INC HL
-		JR .L2
-	ENDIF
-
 ; путь до файла от ROOT
 F_PATH
-;		DB "!README!.TXT",0
-;		DB "PROBA05.SSS",0
-;		DB "SYSTEMZX\\NEOGS\\NEOGS.ROM"
 ;		    0123456789A
-		DB "FA024   $C "
+		DB "FA025   $C "
 		DB 0
 
 PEREM		EQU (HIGH ($) + 1) * 0x100
