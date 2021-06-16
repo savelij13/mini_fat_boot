@@ -1,10 +1,11 @@
 
-; LAST UPDATE 11.06.2021 savelij
+; LAST UPDATE 16.06.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
 		include ../../yad/svn/pentevo/rom/macros.a80
 		include ../../yad/svn/pentevo/rom/sdcomand.a80
+		include define.a80
 
 ;PARSER_PATH	; требует переделки, пока отключен
 
@@ -1051,8 +1052,7 @@ COMPARE
 
 ; имя файла (8 + 3 + 1)
 F_PATH
-		DB "FA025   "
-		DB "$C "
+		DB BOOTNAME
 		DB 0
 
 PEREM		EQU (HIGH ($) + 1) * 0x100

@@ -1,0 +1,4 @@
+
+; LAST UPDATE: 16.06.2021 savelij
+
+BOOTNAME	EQU "SD_BOOT $C "
