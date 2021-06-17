@@ -1,5 +1,5 @@
 
-; LAST UPDATE 11.06.2021 savelij
+; LAST UPDATE 17.06.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
@@ -105,6 +105,10 @@ SD_SEND		EQU P_DATA
 		LD HL,0x2758
 		EXX
 		LD IY,0x5C3A
+		LD A,0x3F
+		LD I,A
+		IM 1
+		EI
 		RET
 
 ; -----------------
