@@ -1,5 +1,5 @@
 
-; LAST UPDATE 16.06.2021 savelij
+; LAST UPDATE 17.06.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
@@ -43,7 +43,8 @@ SD_SEND		EQU P_DATA
  SETVAR ADR_LD,			WORD	;EQU ADRPATH+2		; 2 адрес загрузки
  SETVAR SAVE_IY,		WORD
  SETVAR AFILCLS,		DWORD
- SETVAR FILESIZE,		DWORD
+ SETVAR FILESIZE,		WORD
+ SETVAR FILESIZE_SEC,		BYTE
 
 		ORG ADRLOAD
 		DI
@@ -52,7 +53,7 @@ SD_SEND		EQU P_DATA
 		LD A,0x10
 		OUT (C),A
 		LD HL,F_PATH
-		CALL START
+		CALL START			; инициализация SD карты, FAT и поиска файла
 		AND A
 		JR NZ,$
 		PUSH HL
@@ -66,18 +67,34 @@ SD_SEND		EQU P_DATA
 		POP HL
 		LD DE,-4
 		ADD HL,DE
-		LD DE,FILESIZE
-		LDI
-		LDI
-		LDI
-		LDI
-		LD HL,CACHE_SEC + 0x11
-		LD DE,(CACHE_SEC + 9)
-		PUSH DE
+		LD E,(HL)
+		INC HL
+		LD D,(HL)
+		LD HL,-0x11
+		ADD HL,DE
+		LD (FILESIZE),HL		; размер кода в байтах
+		LD A,H
+		SRL A
+		LD (FILESIZE_SEC),A		; размер кода в секторах
+		LD HL,(CACHE_SEC + 9)		; адрес загрузки
+		PUSH HL
+		LD HL,(CACHE_SEC + 0x0B)	; откуда переносить
+		LD DE,0x11
+		ADD HL,DE
+		LD A,L
+		AND A
+		JR Z,.L1
+		INC H
+.L1		LD A,H
+		SRL A
+		ADC A,0
+		DEC A
+		JP Z,LDIRBUF			; если сектор 1, то переносим и запускаем
+
 		LD BC,0x200 - 0x11
 		LDIR
-;		LD (ADR_LD),DE
-		PUSH DE
+		EX DE,HL
+		PUSH HL				; адрес куда остальные байты грузить
 		LD HL,(CACHE_SEC + 0x0B)
 		LD DE,0x11
 		ADD HL,DE
@@ -86,7 +103,6 @@ SD_SEND		EQU P_DATA
 		LD A,H
 		EXX
 		SRL A
-;		LD HL,(ADR_LD)
 		POP HL
 		CALL READ_FILE
 		PUSH HL
@@ -106,6 +122,26 @@ SD_SEND		EQU P_DATA
 		LD HL,0x2758
 		EXX
 		LD IY,0x5C3A
+
+		RET
+
+LDIRBUF		LD HL,0X200-0X11
+		LD DE,(CACHE_SEC+0X0B)
+		AND A
+		SBC HL,DE
+		JR NC,LDIRBUF1
+		JR LD_ONES
+
+LDIRBUF1	LD HL,CACHE_SEC+0X11
+		LD DE,(CACHE_SEC+9)
+		LD BC,(CACHE_SEC+0X0B)
+		LDIR
+		RET
+
+LD_ONES		LD HL,CACHE_SEC+0X11
+		LD DE,(CACHE_SEC+9)
+		LD BC,0X200-0X11
+		LDIR
 		RET
 
 ; -----------------
