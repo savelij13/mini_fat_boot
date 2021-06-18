@@ -40,11 +40,10 @@ SD_SEND		EQU P_DATA
  SETVAR CLS_DSC,		DWORD	;EQU SEC_DSC+4		; 4 количество кластеров на диске/разделе
  SETVAR FATSTR,			DWORD	;EQU CLS_DSC+4		; 4 начало первой FAT таблицы
  SETVAR ADRPATH,		WORD	;EQU FB_EXT+0x0B	; 2 адрес пути к имени файла
- SETVAR ADR_LD,			WORD	;EQU ADRPATH+2		; 2 адрес загрузки
- SETVAR SAVE_IY,		WORD
  SETVAR AFILCLS,		DWORD
  SETVAR FILESIZE,		WORD
  SETVAR FILESIZE_SEC,		BYTE
+ SETVAR OSTATOK,		BYTE
 
 		ORG ADRLOAD
 		DI
@@ -57,8 +56,6 @@ SD_SEND		EQU P_DATA
 		AND A
 		JR NZ,$
 		PUSH HL
-		LD HL,0
-		LD (SAVE_IY),HL
 		LD IXL,0
 		LD A,1
 		LD HL,CACHE_SEC
@@ -90,6 +87,26 @@ SD_SEND		EQU P_DATA
 		ADC A,0
 		DEC A
 		JP Z,LDIRBUF			; если сектор 1, то переносим и запускаем
+		LD (OSTATOK),A
+		EXX
+		CALL LD_ONES
+		PUSH DE
+		EXX
+		LD HL,1
+		ADD HL,DE
+		EX DE,HL
+		JR NC,.L2
+		INC BC
+.L2		POP HL
+		LD A,IYL
+		CP IXH
+;		JR C,.L3			; переход на дозагрузку остатка секторов
+		INC IYL
+		LD A,IYL
+		CP 2
+		JR C,
+		DEC A
+		
 
 		LD BC,0x200 - 0x11
 		LDIR
@@ -144,26 +161,16 @@ LD_ONES		LD HL,CACHE_SEC+0X11
 		LDIR
 		RET
 
-; -----------------
-; отладочная фигня
-;		DUPL 6
-
-;ZAVIS		JR $
-; -----------------
-
 ; выдача ошибки "нет карточки"
 ZAW003
 		LD A,0xEE
 		RET
 
+; инициализация SD карты, FAT и поиск файла по имени
 ; на входе:
-; HL-текстовая строка пути от root
-; DE-адрес куда грузить
+; HL - имя файла
 START
-		LD IYL,2
-
 		LD (ADRPATH),HL
-		LD (ADR_LD),DE
 
 ; ---------------------------------
 ; для Z-контроллера
@@ -469,15 +476,7 @@ FSRROO2
 ; сектор root директории
 
 		LD HL,(ADRPATH)
-FINDFL1
-	IFDEF PARSER_PATH
-		PUSH BC
-		PUSH DE
-		CALL FNDBUF
-		POP DE
-		POP BC
-	ENDIF
-		PUSH HL
+FINDFL1		PUSH HL
 		LD HL,TDIRCLS
 		LD A,D
 		OR E
@@ -557,7 +556,7 @@ FINDFL		INC BC
 		POP DE
 		POP BC
 		XOR A
-		RET			; на выходе BCDE - номер стартового кластера файла
+		RET				; на выходе BCDE - номер стартового кластера файла
 
 ; A - количество секторов загрузки
 ; BCDE - номер кластера для чтения
@@ -570,24 +569,24 @@ READ_FILE
 		LD (AFILCLS),DE
 		LD (AFILCLS+2),BC
 		EXX
-		LD L,A				;КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
-		LD DE,(SAVE_IY)			;СМЕЩЕНИЕ В КЛАСТЕРЕ
+		LD L,A				; количество секторов для загрузки
 		LD A,(BYTSSEC)
-		LD H,A				;КОЛИЧЕСТВО СЕКТОРОВ В КЛАСТЕРЕ
+		LD H,A				; количество секторов в кластере
 		EXX
-;IXL-L-КОЛИЧЕСТВО СЕКТОРОВ ДЛЯ ЗАГРУЗКИ
-;IXH-H-РАЗМЕР КЛАСТЕРА
-;IYL-E-
-;IYH-D-СМЕЩЕНИЕ В КЛАСТЕРЕ
-LD_FILE0	PUSH HL
-		LD HL,UPDATE_OFFSET_CLS
-		EX (SP),HL
+; IXL - L - количество секторов для загрузки
+; IXH - H - размер кластера
+; IYL - E - 
+; IYH - D - смещение в кластере
+LD_FILE0
+;		PUSH HL
+;		LD HL,UPDATE_OFFSET_CLS
+;		EX (SP),HL
 		LD DE,(AFILCLS)
-		LD BC,(AFILCLS+2)		;ТЕКУЩИЙ НОМЕР КЛАСТЕРА
+		LD BC,(AFILCLS+2)		; текущий номер кластера
 		PUSH BC
 		PUSH DE
 		PUSH HL
-		CALL REALSEC			;ПЕРЕВЕЛИ НОМЕР КЛАСТЕРА В НОМЕР СЕКТОРА
+		CALL REALSEC			; перевели номер кластера в номер сектора
 		EXX
 		LD A,D			;IYH
 		EXX
@@ -596,7 +595,7 @@ LD_FILE0	PUSH HL
 		ADD HL,DE
 		EX DE,HL
 		JR NC,LD_FILE1
-		INC BC				;BCDE=НОМЕР СЕКТОРА ОТКУДА ГРУЗИТЬ
+		INC BC				; BCDE = номер сектора откуда грузить
 LD_FILE1	EXX
 		LD A,L			;IXL
 		CP H			;IXH
@@ -608,12 +607,12 @@ LD_FILE2	ADD A,D			;IYH
 		JP C,LD_FILE5
 		LD A,H			;IXH
 		SUB D			;IYH
-LD_FILE5	LD E,A			;IYL,A	;СКОЛЬКО СЕКТОРОВ СЕЙЧАС ГРУЗИМ
+LD_FILE5	LD E,A			;IYL,A	; сколько секторов сейчас грузим
 		EXX
-		POP HL				;ВОССТАНОВИЛИ АДРЕС ЗАГРУЗКИ
+		POP HL				; восстановили адрес загрузки
 		CALL RDMULTI
 LD_FILE7	POP DE
-		POP BC				;ВОССТАНОВИЛИ НОМЕР КЛАСТЕРА
+		POP BC				; восстановили номер кластера
 		EXX
 		LD A,D			;IYH
 		ADD A,E			;IYL
@@ -623,13 +622,13 @@ LD_FILE7	POP DE
 LD_FILE3	LD D,A			;IYH,A
 		EXX
 		JP C,LD_FILE4
-		PUSH HL				;СОХРАНИЛИ АДРЕС ЗАГРУЗКИ
-		CALL RDFATZP			;ПРОЧИТАЛИ НОМЕР СЛЕДУЮЩЕГО КЛАСТЕРА
+		PUSH HL				; сохранили адрес загрузки
+		CALL RDFATZP			; прочитали номер следующего кластера
 		LD (AFILCLS),DE
 		LD (AFILCLS+2),BC
-		CALL LST_CLS			;ПРОВЕРИЛИ, А МОЖЕТ ЭТО ПОСЛЕДНИЙ КЛАСТЕР?
-		POP HL				;ВОССТАНОВИЛИ АДРЕС ЗАГРУЗКИ
-		RET C				;ЕСЛИ ПОСЛЕДНИЙ, ВЫХОДИМ
+		CALL LST_CLS			; проверили, а может это последний кластер?
+		POP HL				; восстановили адрес загрузки
+		RET C				; если последний, выходим
 LD_FILE4	EXX
 		LD A,L			;IXL
 		SUB E			;IYL
@@ -641,11 +640,11 @@ LD_FILE4	EXX
 		JP NZ,LD_FILE0
 		RET
 
-UPDATE_OFFSET_CLS
-		EXX
-		LD (SAVE_IY),DE
-		EXX
-		RET
+;UPDATE_OFFSET_CLS
+;		EXX
+;		LD (SAVE_IY),DE
+;		EXX
+;		RET
 
 SAVEZP
 		LD (HL),E
