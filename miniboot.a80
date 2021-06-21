@@ -53,7 +53,7 @@ SD_SEND		EQU P_DATA
 		LD HL,F_PATH
 		CALL START			; инициализация SD карты, FAT и поиска файла
 		AND A
-		JR NZ,$				; файл не найден
+		JP NZ,NOTFOUND			; файл не найден
 
 		CALL REALSEC			; преобразовали в номер сектора
 		CALL LOADLST			; загрузили в буфер
@@ -1035,6 +1035,18 @@ COMPARE
 		INC DE
 		DJNZ .L1
 		RET
+
+NOTFOUND
+		XOR A
+		CALL 0x1601
+		LD DE,TXT_ERROR
+		LD BC,ETXT_ERROR - TXT_ERROR
+		CALL 0x203C
+		DI
+		HALT
+
+TXT_ERROR	DB "File \"",BOOTNAME,"\" not found.\rPress RESET"
+ETXT_ERROR
 
 ; имя файла (8 + 3 + 1)
 F_PATH
