@@ -1,5 +1,5 @@
 
-; LAST UPDATE 17.06.2021 savelij
+; LAST UPDATE 21.06.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
@@ -29,6 +29,7 @@ SD_SEND		EQU P_DATA
  SETVAR BUF_512,		0x200	;EQU TDIRCLS+0x0400	; 0x200 буфер сектора
  SETVAR CACHE_SEC,		0x200				; 0x200 кеш сектора для разбора Hobeta заголовка
  SETVAR CAL_FAT,		BYTE	;EQU BUF_512+0x0200	; 1 калибр FAT
+ SETVAR MANYFAT,		BYTE
  SETVAR BYTSSEC,		BYTE	;EQU CAL_FAT+1		; 1 количество секторов в кластере
  SETVAR ROOTCLS,		DWORD	;EQU BYTSSEC+1		; 4 сектор начала ROOT директории
  SETVAR ROOTSEC,		WORD	;EQU ROOTCLS+4		; 2 размер в секторах ROOT директории
@@ -41,9 +42,7 @@ SD_SEND		EQU P_DATA
  SETVAR FATSTR,			DWORD	;EQU CLS_DSC+4		; 4 начало первой FAT таблицы
  SETVAR ADRPATH,		WORD	;EQU FB_EXT+0x0B	; 2 адрес пути к имени файла
  SETVAR AFILCLS,		DWORD
- SETVAR FILESIZE,		WORD
- SETVAR FILESIZE_SEC,		BYTE
- SETVAR OSTATOK,		BYTE
+ SETVAR LENGHT,			WORD
 
 		ORG ADRLOAD
 		DI
@@ -54,109 +53,135 @@ SD_SEND		EQU P_DATA
 		LD HL,F_PATH
 		CALL START			; инициализация SD карты, FAT и поиска файла
 		AND A
-		JR NZ,$
-		PUSH HL
-		LD IXL,0
-		LD A,1
-		LD HL,CACHE_SEC
-		CALL READ_FILE
+		JR NZ,$				; файл не найден
+
+		CALL REALSEC			; преобразовали в номер сектора
+		CALL LOADLST			; загрузили в буфер
 		EXX
-		POP HL
-		LD DE,-4
-		ADD HL,DE
-		LD E,(HL)
-		INC HL
-		LD D,(HL)
-		LD HL,-0x11
-		ADD HL,DE
-		LD (FILESIZE),HL		; размер кода в байтах
-		LD A,H
-		SRL A
-		LD (FILESIZE_SEC),A		; размер кода в секторах
-		LD HL,(CACHE_SEC + 9)		; адрес загрузки
-		PUSH HL
-		LD HL,(CACHE_SEC + 0x0B)	; откуда переносить
+		LD HL,(BUF_512+9)
+		LD (RUN_ADR),HL			; адрес старта кода
+		LD HL,(BUF_512+0X0B)
+		LD (LENGHT),HL			; установка длины файла в байтах
 		LD DE,0x11
-		ADD HL,DE
+		ADD HL,DE			; пропуск Hobeta заголовка
 		LD A,L
 		AND A
-		JR Z,.L1
-		INC H
-.L1		LD A,H
-		SRL A
-		ADC A,0
-		DEC A
-		JP Z,LDIRBUF			; если сектор 1, то переносим и запускаем
-		LD (OSTATOK),A
+		JR Z,READ01			; если младший байт не 0
+		INC H				; старший +1
+READ01		LD A,H
+		SRL A				; делим на 2 ибо на FAT сектор 512 байт
+		ADC A,0				; учитываем чет/нечет
+		DEC A				; первый сектор загружен, грузить на 1 меньше
 		EXX
+		JP Z,LDIRBUF			; если сектор 1 перенос и запуск
+		DEC A
+		LD IXL,A			; запомнили количество секторов-1
+		JP Z,READ08			; если секторов 2 осталось загрузить кусок из второго сектора
+		EXX
+		CALL LD_ONES			; перенос остатков первого сектора
+		PUSH DE				; адрес куда далее грузить
+		EXX
+		LD HL,1				; один сектор уже загружен
+		ADD HL,DE			; далее грузить со следующего сектора 
+		EX DE,HL
+		JR NC,READ04
+		INC BC				; BCDE++
+READ04		POP HL				; в HL адрес для продолжения загрузки
+		LD IY,(BYTSSEC)			; LY = количество секторов в кластере
+		LD A,IXL
+		CP IYL				; секторов осталось меньше чем в кластере
+		JR C,READ02			; переход на дозагрузку остатка секторов
+		INC IXL
+		LD A,IYL
+		CP 2
+		JR C,READ07
+		DEC A
+		JR READ05
+
+READ07		PUSH HL
+		CALL RDFATZP			; получить номер следующего кластера
+		CALL LST_CLS			; проверка на окончание FAT цепочки
+		POP HL
+		JR C,RUNLOAD			; если кластера закончились, то запуск загруженного
+		PUSH HL
+		CALL REALSEC			; преобразование номера кластера в номер сектора
+		POP HL
+		LD A,IXL			; сколько секторов осталось загрузить
+		CP IYL				; сравниваем с размером кластера
+		JR C,READ02			; если осталось загрузить секторов меньше чем в кластере, то дозагружаем остаток
+		LD A,IYL			; сколько секторов загружать
+READ05		CALL RDMULTI			; загрузка секторов
+		LD A,IXL			; сколько секторов всего загружать
+		SUB IYL				; минус сколько секторов только что загрузили
+		JR Z,RUNLOAD			; сектора кончились, переходим на запуск
+		LD IXL,A			; сколько секторов осталось загрузить
+		JR READ07			; продолжаем загрузку
+
+; размер кода в Hobeta менее 2 секторов
+; копируем хвост первого сектора и догружаем из второго с переносом
+READ08		EXX
 		CALL LD_ONES
 		PUSH DE
 		EXX
-		LD HL,1
-		ADD HL,DE
-		EX DE,HL
-		JR NC,.L2
-		INC BC
-.L2		POP HL
-		LD A,IYL
-		CP IXH
-;		JR C,.L3			; переход на дозагрузку остатка секторов
-		INC IYL
-		LD A,IYL
-		CP 2
-		JR C,
-		DEC A
-		
-
-		LD BC,0x200 - 0x11
-		LDIR
-		EX DE,HL
-		PUSH HL				; адрес куда остальные байты грузить
-		LD HL,(CACHE_SEC + 0x0B)
-		LD DE,0x11
-		ADD HL,DE
-		DEC H
-		DEC H
-		LD A,H
-		EXX
-		SRL A
 		POP HL
-		CALL READ_FILE
-		PUSH HL
-		LD A,1
-		LD HL,CACHE_SEC
-		CALL READ_FILE
-		LD HL,FILESIZE
-		LD C,(HL)
-		INC HL
-		LD A,(HL)
+		LD IXL,1
+		JR READ03
+
+; загрузка количества секторов, если осталось менее размера кластера
+READ02		AND A
+		JR Z,READ03
+		CALL RDMULTI
+READ03		PUSH HL
+		LD A,IXL
+		LD L,A
+		LD H,0
+		ADD HL,DE
+		EX DE,HL
+		JR NC,READ06
+		INC BC
+READ06		CALL LOADLST
+		LD BC,(LENGHT)
+		EX DE,HL
+		LD HL,0X11
+		ADD HL,BC
+		LD B,H
+		LD C,L
+		EX DE,HL
+		POP DE
+		LD A,B
 		AND 1
 		LD B,A
-		LD DE,CACHE_SEC
-		POP HL
+		OR C
+		JR Z,RUNLOAD
 		LDIR
-
-		LD HL,0x2758
+; запуск загруженного
+RUNLOAD		LD HL,0X2758
 		EXX
 		LD IY,0x5C3A
-
-		RET
+		LD A,0x3F
+		LD I,A
+		IM 1
+		EI
+		JP 0			; запуск загруженного кода
+RUN_ADR		EQU $-2
 
 LDIRBUF		LD HL,0X200-0X11
-		LD DE,(CACHE_SEC+0X0B)
+		LD DE,(BUF_512+0X0B)
 		AND A
 		SBC HL,DE
 		JR NC,LDIRBUF1
-		JR LD_ONES
+		CALL LD_ONES
+		JP RUNLOAD
 
-LDIRBUF1	LD HL,CACHE_SEC+0X11
-		LD DE,(CACHE_SEC+9)
-		LD BC,(CACHE_SEC+0X0B)
+LDIRBUF1	LD HL,BUF_512+0X11
+		LD DE,(BUF_512+9)
+		LD BC,(BUF_512+0X0B)
 		LDIR
-		RET
+		JP RUNLOAD
 
-LD_ONES		LD HL,CACHE_SEC+0X11
-		LD DE,(CACHE_SEC+9)
+; перенос куска из уже загруженного сектора, если файл=501 байт и менее
+LD_ONES		LD HL,BUF_512+0X11
+		LD DE,(BUF_512+9)
 		LD BC,0X200-0X11
 		LDIR
 		RET
@@ -169,6 +194,8 @@ ZAW003
 ; инициализация SD карты, FAT и поиск файла по имени
 ; на входе:
 ; HL - имя файла
+; на выходе:
+; BCDE - номер калстера файла
 START
 		LD (ADRPATH),HL
 
@@ -381,6 +408,7 @@ RDFAT03
 		PUSH HL				; ROOTDIRSECTORS
 		LD (ROOTSEC),HL
 		LD A,(BUF_512+0x10)
+		LD (MANYFAT),A
 		LD DE,(SEC_FAT)
 		LD HL,(SEC_FAT+2)
 		DEC A
@@ -532,8 +560,8 @@ FINDFL		INC BC
 		AND 0x10
 		LD A,0xAA
 		RET NZ
-		PUSH BC
-		PUSH DE
+		LD (AFILCLS),DE
+		LD (AFILCLS+2),BC		; BCDE - номер кластера файла
 		CALL LOADZP
 		LD A,E
 		AND A
@@ -553,98 +581,8 @@ FINDFL		INC BC
 		LD A,(BYTSSEC)
 		LD IXH,A
 		EXX
-		POP DE
-		POP BC
 		XOR A
-		RET				; на выходе BCDE - номер стартового кластера файла
-
-; A - количество секторов загрузки
-; BCDE - номер кластера для чтения
-; HL - адрес загрузки
-; IXL - L - количество секторов для загрузки
-; IXH - H - размер кластера
-; IYL - E -
-; IYH - D - смещение в кластере
-READ_FILE
-		LD (AFILCLS),DE
-		LD (AFILCLS+2),BC
-		EXX
-		LD L,A				; количество секторов для загрузки
-		LD A,(BYTSSEC)
-		LD H,A				; количество секторов в кластере
-		EXX
-; IXL - L - количество секторов для загрузки
-; IXH - H - размер кластера
-; IYL - E - 
-; IYH - D - смещение в кластере
-LD_FILE0
-;		PUSH HL
-;		LD HL,UPDATE_OFFSET_CLS
-;		EX (SP),HL
-		LD DE,(AFILCLS)
-		LD BC,(AFILCLS+2)		; текущий номер кластера
-		PUSH BC
-		PUSH DE
-		PUSH HL
-		CALL REALSEC			; перевели номер кластера в номер сектора
-		EXX
-		LD A,D			;IYH
-		EXX
-		LD L,A
-		LD H,0
-		ADD HL,DE
-		EX DE,HL
-		JR NC,LD_FILE1
-		INC BC				; BCDE = номер сектора откуда грузить
-LD_FILE1	EXX
-		LD A,L			;IXL
-		CP H			;IXH
-		JP C,LD_FILE2
-		LD A,H			;IXH
-LD_FILE2	ADD A,D			;IYH
-		CP H			;IXH
-		LD A,L			;IXL
-		JP C,LD_FILE5
-		LD A,H			;IXH
-		SUB D			;IYH
-LD_FILE5	LD E,A			;IYL,A	; сколько секторов сейчас грузим
-		EXX
-		POP HL				; восстановили адрес загрузки
-		CALL RDMULTI
-LD_FILE7	POP DE
-		POP BC				; восстановили номер кластера
-		EXX
-		LD A,D			;IYH
-		ADD A,E			;IYL
-		CP H			;IXH
-		JP C,LD_FILE3
-		SUB H			;IXH
-LD_FILE3	LD D,A			;IYH,A
-		EXX
-		JP C,LD_FILE4
-		PUSH HL				; сохранили адрес загрузки
-		CALL RDFATZP			; прочитали номер следующего кластера
-		LD (AFILCLS),DE
-		LD (AFILCLS+2),BC
-		CALL LST_CLS			; проверили, а может это последний кластер?
-		POP HL				; восстановили адрес загрузки
-		RET C				; если последний, выходим
-LD_FILE4	EXX
-		LD A,L			;IXL
-		SUB E			;IYL
-		EXX
-		RET Z
-		EXX
-		LD L,A			;IXL,A
-		EXX
-		JP NZ,LD_FILE0
 		RET
-
-;UPDATE_OFFSET_CLS
-;		EXX
-;		LD (SAVE_IY),DE
-;		EXX
-;		RET
 
 SAVEZP
 		LD (HL),E
@@ -723,7 +661,10 @@ LST_CL2		LD HL,0x0FFF
 		RET NZ
 		JR LST_CL3
 
-RDFATZP		LD A,(CAL_FAT)
+RDFATZP
+		LD BC,(AFILCLS+2)
+		LD DE,(AFILCLS)
+		LD A,(CAL_FAT)
 		AND A
 		JR Z,RDFATS0
 		DEC A
@@ -744,6 +685,8 @@ RDFATZP		LD A,(CAL_FAT)
 		LD C,(HL)
 		INC HL
 		LD B,(HL)
+RDFATS5		LD (AFILCLS+2),BC
+		LD (AFILCLS),DE
 		RET
 
 RDFATS1		LD BC,0
@@ -764,7 +707,7 @@ RDFATS2		PUSH AF
 		LD E,(HL)
 		INC HL
 		LD D,(HL)
-		RET
+		JR RDFATS5
 
 RDFATS0		LD H,D
 		LD L,E
@@ -821,6 +764,8 @@ RDFATS3		LD A,D
 ; на входе: BCDE = номер кластера
 ; на выходе: BCDE = номер сектора
 REALSEC
+		LD BC,(AFILCLS+2)
+		LD DE,(AFILCLS)
 		LD A,B
 		OR C
 		OR D
@@ -829,10 +774,16 @@ REALSEC
 		LD HL,SEC_FAT
 		LD DE,(FATSTR)
 		LD BC,(FATSTR+2)
+		LD HL,SEC_FAT
+		LD A,(MANYFAT)
+.L0		DEC A
+		JP Z,BCDEHLP
 		PUSH HL
+		PUSH AF
 		CALL BCDEHLP
+		POP AF
 		POP HL
-		JP BCDEHLP
+		JP .L0
 
 REALSE1
 		LD HL,0xFFFE
