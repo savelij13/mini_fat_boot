@@ -1045,7 +1045,7 @@ NOTFOUND
 		DI
 		HALT
 
-TXT_ERROR	DB "File \"",BOOTNAME,"\" not found.\rPress RESET"
+TXT_ERROR	DB "File \"",BOOTNAME,"\" not found.\rPress RESET."
 ETXT_ERROR
 
 ; имя файла (8 + 3 + 1)
