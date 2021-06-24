@@ -1,13 +1,12 @@
 
-; LAST UPDATE 21.06.2021 savelij
+; LAST UPDATE 24.06.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
 		include ../../yad/svn/pentevo/rom/macros.a80
 		include ../../yad/svn/pentevo/rom/sdcomand.a80
+		include ../../yad/svn/pentevo/rom/bootsecfat.a80
 		include define.a80
-
-;PARSER_PATH	; требует переделки, пока отключен
 
 SD_RSTR		EQU P_DATA
 SD_SEND		EQU P_DATA
@@ -289,19 +288,25 @@ WC_FAT
 		LD DE,4
 		ADD HL,DE
 		LD A,(HL)
-		LD B,0
+
+		LD B,0			; FAT12
 		CP 1
 		JR Z,RDFAT06
-		LD B,2
+
+		LD B,2			; FAT32
 		CP 0x0B
 		JR Z,RDFAT06
 		CP 0x0C
 		JR Z,RDFAT06
-		LD B,1
+
+		LD B,1			; FAT16
+		CP 4
+		JR Z,RDFAT06
 		CP 6
 		JR Z,RDFAT06
 		CP 0x0E
 		JR NZ,RDFAT05
+; тип FAT взят из описателя MBR
 RDFAT06
 		LD A,B
 		LD (CAL_FAT),A
@@ -309,8 +314,9 @@ RDFAT06
 		CALL LOADZP
 		JR RDFAT00
 
+; MBR не найдена, попытка определить тип FAT из сектора 0
 RDFAT05
-		LD C,(IX+0x0D)
+		LD C,(IX + _BPB_SecPerClus)
 		XOR A
 		LD E,A
 		LD B,8
@@ -320,21 +326,21 @@ RDFAT05
 		DEC A
 		JR NZ,.L2
 		INC E
-.L2		LD A,(IX+0x0E)
-		OR (IX+0x0F)
+.L2		LD A,(IX + _BPB_RsvdSecCnt)
+		OR (IX + _BPB_RsvdSecCnt + 1)
 		JR Z,.L3
 		INC E
-.L3		LD A,(IX+0x13)
-		OR (IX+0x14)
+.L3		LD A,(IX + _BPB_TotSec16)
+		OR (IX + _BPB_TotSec16 + 1)
 		JR NZ,.L4
 		INC E
-.L4		LD A,(IX+0x20)
-		OR (IX+0x21)
-		OR (IX+0x22)
-		OR (IX+0x23)
+.L4		LD A,(IX + _BPB_TotSec32)
+		OR (IX + _BPB_TotSec32 + 1)
+		OR (IX + _BPB_TotSec32 + 2)
+		OR (IX + _BPB_TotSec32 + 3)
 		JR NZ,.L5
 		INC E
-.L5		LD A,(IX+0x15)
+.L5		LD A,(IX + _BPB_Media)
 		AND 0xF0
 		CP 0xF0
 		JR NZ,.L6
@@ -351,32 +357,32 @@ RDFAT05
 
 RDFAT00
 		LD (STARTRZ),DE
-		LD (STARTRZ+2),BC
+		LD (STARTRZ + 2),BC
 		CALL LOADLST
 		LD HL,0
-		LD DE,(BUF_512+0x16)		
-; BPB_FATSZ16
+		LD DE,(BUF_512 + _BPB_FATSz16)		
+; _BPB_FATSz16
 		LD A,D
 		OR E
 		JR NZ,RDFAT01
-; если не FAT12/16 (BPB_FATSZ16=0)
-		LD DE,(BUF_512+0x24)
-		LD HL,(BUF_512+0x26)
-; BPB_FATSZ32
+; если не FAT12/16 (_BPB_FATSz16 = 0)
+		LD DE,(BUF_512 + _BPB_FATSz32)
+		LD HL,(BUF_512 + _BPB_FATSz32 + 2)
+; _BPB_FATSz32
 ; то берем из смещения +36
 RDFAT01
 		LD (SEC_FAT+2),HL
 		LD (SEC_FAT),DE
 ; число секторов на FAT-таблицу
 		LD HL,0
-		LD DE,(BUF_512+0x13)
-; BPB_TOTSEC16
+		LD DE,(BUF_512 + _BPB_TotSec16)
+; _BPB_TotSec16
 		LD A,D
 		OR E
 		JR NZ,RDFAT02
-; если не FAT12/16 (BPB_TOTSEC16=0)
-		LD DE,(BUF_512+0x20)
-		LD HL,(BUF_512+0x22)
+; если не FAT12/16 (_BPB_TotSec16 = 0)
+		LD DE,(BUF_512 + _BPB_TotSec32)
+		LD HL,(BUF_512 + _BPB_TotSec32 + 2)
 ; BPB_TOTSEC32
 ; то берем из смещения +32
 RDFAT02
@@ -385,10 +391,10 @@ RDFAT02
 ; количество секторов на диске/разделе
 
 ; вычисляем ROOTDIRSECTORS
-		LD BC,(BUF_512+0x0B)
-; BPB_BYTSPERSEC
-		LD DE,(BUF_512+0x11)
-; BPB_ROOTENTCNT
+		LD BC,(BUF_512 + _BPB_BytsPerSec)
+; _BPB_BytsPerSec
+		LD DE,(BUF_512 + _BPB_RootEntCnt)
+; _BPB_RootEntCnt
 		LD HL,0
 		LD A,D
 		OR E
@@ -400,14 +406,14 @@ RDFAT02
 		EX DE,HL
 
 ; это реализована формула
-; ROOTDIRSECTORS = ((BPB_ROOTENTCNT*32) + (BPB_BYTSPERSEC-1)) / BPB_BYTSPERSEC
+; ROOTDIRSECTORS = ((_BPB_RootEntCnt * 32) + (_BPB_BytsPerSec - 1)) / _BPB_BytsPerSec
 ; в HL ROOTDIRSECTORS
 ; если FAT32, то HL=0 всегда
 
 RDFAT03
 		PUSH HL				; ROOTDIRSECTORS
 		LD (ROOTSEC),HL
-		LD A,(BUF_512+0x10)
+		LD A,(BUF_512 + _BPB_NumFATs)
 		LD (MANYFAT),A
 		LD DE,(SEC_FAT)
 		LD HL,(SEC_FAT+2)
@@ -422,8 +428,8 @@ RDFAT03
 ; полный размер FAT-области в секторах
 		CALL HLDEPBC
 ; прибавили ROOTDIRSECTORS
-		LD BC,(BUF_512+0x0E)
-; BPB_RSVDSECCNT
+		LD BC,(BUF_512 + _BPB_RsvdSecCnt)
+; _BPB_RsvdSecCnt
 		LD (RSVDSEC),BC
 		CALL HLDEPBC
 ; прибавили BPB_RESVDSECCNT
@@ -436,7 +442,7 @@ RDFAT03
 ; BCDE + 32-ое число по адресу HL
 		CALL BCDEHLM
 ; вычли из полного к-ва секторов раздела
-		LD A,(BUF_512+0x0D)
+		LD A,(BUF_512 + _BPB_SecPerClus)
 		LD (BYTSSEC),A
 		CALL BCDE_A
 ; разделили на количество секторов в кластере
@@ -493,11 +499,11 @@ RDFAT04
 		LD DE,0
 		LD B,D
 		LD C,E
-		JR Z,FSRROO2			;FAT12-NONE
+		JR Z,FSRROO2				;FAT12-NONE
 		DEC A
-		JR Z,FSRROO2			;FAT16
-		LD DE,(BUF_512+0x2C)
-		LD BC,(BUF_512+0x2E)		;FAT32
+		JR Z,FSRROO2				;FAT16
+		LD DE,(BUF_512 + _BPB_RootClus)
+		LD BC,(BUF_512 + _BPB_RootClus + 2)	;FAT32
 FSRROO2
 		LD (ROOTCLS),DE
 		LD (ROOTCLS+2),BC
@@ -1025,6 +1031,7 @@ RD_CLAS		EX DE,HL
 		INC HL
 		RET
 
+; проверка имени файла
 COMPARE
 		LD DE,F_PATH
 		LD B,8 + 3
@@ -1036,6 +1043,7 @@ COMPARE
 		DJNZ .L1
 		RET
 
+; файл не найден, вывод текста срествами Basic 48
 NOTFOUND
 		XOR A
 		CALL 0x1601
@@ -1045,6 +1053,7 @@ NOTFOUND
 		DI
 		HALT
 
+; текст об ошибке если файл не найден
 TXT_ERROR	DB "File \"",BOOTNAME,"\" not found.\rPress RESET."
 ETXT_ERROR
 
