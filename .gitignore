@@ -1,3 +1,4 @@
 rom/*.rom
 lst/*.lst
 *.lst
+bin/bas_var_pack.bin
