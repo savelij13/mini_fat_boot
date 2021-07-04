@@ -1,5 +1,5 @@
 
-; LAST UPDATE 01.07.2021 savelij
+; LAST UPDATE 03.07.2021 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
@@ -189,7 +189,9 @@ LD_ONES		LD HL,BUF_512+0X11
 		RET
 
 ; выдача ошибки "нет карточки"
-ZAW003
+ZAW003		LD HL,0x2758
+		EXX
+		LD IY,0x5C3A
 		LD A,0xEE
 		RET
 
