@@ -1,5 +1,5 @@
 
-; LAST UPDATE 03.07.2021 savelij
+; LAST UPDATE 23.02.2022 savelij
 
 ; загрузчик и запускатель файлов в Hobeta формате с SD карты
 
@@ -434,7 +434,6 @@ RDFAT03		PUSH DE				; ROOTDIRSECTORS
 		EX DE,HL
 		LD HL,0
 		ADC HL,BC
-		ADD HL,BC
 		LD B,H
 		LD C,L
 		LD (FRSTDAT),DE
